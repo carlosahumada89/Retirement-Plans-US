@@ -1,0 +1,129 @@
+---
+title: "Retirement Plans System in the U.S. - an Unsupervised Learning Approach"
+author: "Carlos Ahumada"
+date: "April 19, 2019"
+output:
+  html_notebook:
+    toc: true 
+    toc_depth: 3  
+    theme: united  
+    highlight: tango  
+---
+
+
+# Introduction
+Retirement plans are an important part of the financial system for citizens and governments. At the individual level, a good retirement plan can provide people with enough means to maintain their lifestyle once they leave the workforce. At the government level, retirement plans have positive effects in the economy through investments and take away pressure from the fiscal system (people not only relying on government support after retirement). However, the number of retirements plans can be significant, and so their particularities.  
+
+# Research Question
+How do retirements plans in the US at the state level cluster? What are the most relevant variables to cluster them? Answering this question is relevant not only for workers to compare the current state of each plan and take financial decisions, but also for authorities and regulators to have a better understanding on how these plans are working. By clustering plans, authorities are in a better position to target certain states and plans by selecting relevant indicators. 
+
+# Data
+To develop this project, the [State and Local Public Plans Database](https://publicplansdata.org/public-plans-database/download-full-data-set/) from Public Plans Data will be used. This dataset contains information not on individual retirement plans, but on system retirement plans per state. We are going to use only the retirement systems from 2018. Before we can proceed with the model, it is important to notice that the dataset contains missing values that should be estimated before performing a unsupervised method (unconditional mean imputation). Furthermore, the data must be scaled. The raw data contains 60 variables and 2732 observations. 37 variables of the 60 contain multiple missing values and  little information so they will be removed.
+
+```{r include=FALSE}
+library(dplyr)
+library(stringi)
+library (magrittr)
+library (mice)
+library(VIM)
+library (factoextra)
+```
+
+```{r include=FALSE}
+#Preparing Dataset
+retirement <- read.csv("/Users/carlo/Desktop/RetirementSystemData .csv")
+
+#Filtering by 2018
+retirement <- retirement %>% filter (fy ==2018)
+
+#Removing variables without information
+drops <- c("beneficiaries_SpousalSurvivors", "beneficiaries_other",
+                              "DROPMembers", "OtherMembers", "contrib_EE_PurchaseService",
+                              "contrib_EE_other", "contrib_ER_other", "FairValueChange_RealEstate",
+                              "income_PrivateEquity", "income_alternatives", 
+                              "income_international", "expense_RealEstate", 
+                              "expense_PrivateEquity", "expense_alternatives", 
+                              "expense_OtherInvestments", "expense_DisabilityBenefits", 
+                             "expense_COLABenefits", "expense_LumpSumBenefits", 
+                              "adjustment_MktAssets", "inactiveNonMembers", "beneficiaries_survivor",
+           "contrib_ER_state", "contrib_other", "income_interest", "income_dividend", "income_RealEstate",
+           "income_OtherInvestments", "income_SecuritiesLending", "expense_SecuritiesLending",
+           "income_SecuritiesLendingRebate", "income_OtherAdditions", "expense_DeathBenefits",
+           "expense_DROPBenefits", "expense_OtherBenefits", "expense_Depreciation", "expense_SurvivorBenefits",
+           "beneficiaries_survivors", "InactiveNonVested", "income_dividends", "expense_OtherDeductions", "expense_RetBenefits", 
+           "fy", "system_id")
+retirement <- retirement[ , !(names(retirement) %in% drops)]
+
+#Multiple imputation
+aggr_plot <- aggr(retirement, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, labels=names(data), cex.axis=.7, gap=3, ylab=c("Histogram of missing data","Pattern"))
+
+
+tempData <- mice(retirement,m=2,maxit=5,meth='mean',seed=200)
+summary(tempData)
+
+retirement2 <- complete(tempData,1)
+rownames(retirement2) <- retirement2[,1]
+retirement2[ ,1] <- NULL
+
+
+
+#Scaling
+retirement2$NumberofEmployers <- as.character(retirement2$NumberofEmployers)
+retirement2$NumberofEmployers <- as.numeric(retirement2$NumberofEmployers)
+retirement2$NumberofEmployers[is.na(retirement2$NumberofEmployers)] <- 1
+retirement2$NumberofPlans <- as.numeric(retirement2$NumberofPlans)
+
+retirement2 <- scale(retirement2)
+
+```
+
+
+# Model
+Since in the K means we need to provide the algorithm with a number of clusters that we want, it is useful to make use of the fviz_nbclust function. The results suggest that 4 is the optimal number.
+```{r echo=TRUE}
+set.seed(123)
+fviz_nbclust(retirement2, kmeans, method = "wss")
+```
+
+The graph above shows the optimal number of clusters to reduce the total within sum of squared. Usually, the optimal number of clusters is found at the "elbow" of the graph. In this case, the "elbow" can be identified when the number of clusters reaches four. However, it is important to notice that when the number of clusters reaches nine, there is again a sharp decrease in the total within sum of squares. 
+
+
+```{r include=FALSE}
+k4 <- kmeans(retirement2, centers = 4, nstart = 25)
+```
+
+```{r echo=TRUE}
+#Plotting K-Means plot
+rownames(retirement2) <- rownames((retirement))
+fviz_cluster(k4, data = retirement2)
+```
+<br>The function and plot above undertakes a PCA to plot the retirement plans in two dimensions and then cluster them through a K-Means approach. However, we can also use pairwise scatter plots. A high concentration of systems around the zero values and the California Public Employees Retirement System (number 8) as an outlier can be perceived. This California system clusters with the Teacher Retirement System of Texas (87), the New York State and Local Retirement Systems (65) and with the California State Teachers Retirement System (9). Intutively, one can deduct that these are big retirement systems compared to the others, not only necessary in terms of active users, but in overall characteristics. <br>
+
+
+```{r}
+retirement2 %>%
+  as_tibble() %>%
+  mutate(cluster = k4$cluster,
+         state = row.names(retirement2)) %>%
+  ggplot(aes(income_net, expense_net, color = factor(cluster), label = state)) +
+  geom_text()
+```
+The plot above shows the clustering of the retirement systems by income and expenses. Again we see a high concentration around the zero values and the California Public Employees Retirement System (number 8) as an outlier. When plotting by income and expenses, one can perceive that the Florida Retirement System, while it is not part of cluster number 3 (same systems as in the previous plot), it is very similar in terms on income and expenses as the Teacher Retirement System of Texas (87). 
+
+
+# Discussion
+The analysis presented above is a perfect example of the difficulties that one can face when using unsupervised methods, particularly K-means. The first issue with this data was that it was incomplete. By having incomplete data, one must make use of an imputation technique. However, this comes with a price. In the graphs above, we can see how cluster number one contains the majority of observations. This might be due to the means imputation, and the effect of an outlier. Second, K-Means is very sensitive to outliers. In this case, the California Public Employees Retirement System (8) is having a huge influence in the clusters composition. A solution might be to undertake a Independent Component Analysis. 
+
+# Conclusion
+Machine learning tools can be useful for regulatory agencies around the world to detect behavioral patterns among a group of entities. This visibility can save time and resources for authorities. However, in order to be able to do so, the data collection process should become a priority for them. In this case, with the information available and a statistical method to solve for missing values, authorities can start detecting similiarities between the California Public Employees' Retirement System (8), which as of June 2014 managed the largest public pension fund in the United States with $300.3 billion in assets, and others such as the New York State and Local Retirement System. Moreover, by clustering the retirement plans, regulatory agencies can distribute better their efforts. For example, an agency can set up a special department for the "big" systems, assign another group for the "middle sized" and so on. A more qualitative analysis is required to see if the pension systems are clustering in terms of size and income, or if there are other particularities and patterns that are dominating the relationship between them. 
+
+
+
+
+
+
+
+
+
+
+
